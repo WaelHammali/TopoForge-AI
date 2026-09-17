@@ -233,3 +233,69 @@ torch, faiss, ultralytics, opencv, paddleocr, groq, structlog.
 **Design consequence:** every heavy dependency is imported lazily inside its adapter. The
 domain, application, and orchestration-routing layers import none of them, so the unit suite
 runs on a bare interpreter.
+
+---
+
+## 9. Addendum — the RAG was restructured mid-build (2026-09-17)
+
+Re-inspection during Phase 11 found the external RAG substantially rewritten. The analysis
+in §2 above describes the **archived** implementation, which now lives under `legacy/` in
+that repository and is explicitly marked "unused by the active API". The findings there are
+retained because they explain what the archived code did and why it was not carried over;
+they no longer describe the integration target.
+
+### 9.1 The active RAG
+
+```
+architecture JSON  →  retrieval  →  one model call  →  plan JSON
+```
+
+Public API — `app.plan_architecture(architecture: dict, *, client=None, retriever=None) -> dict`.
+
+| Module | Role |
+| --- | --- |
+| `app.py` (72 lines) | Python API + `plan` / `context` CLI. Deep-copies the input, retrieves, plans, and re-attaches the untouched architecture and the knowledge citations. |
+| `retriever.py` (340 lines) | Hybrid retrieval: BM25 + embeddings + cross-encoder, content-aware caching, core rules always pinned. A `lexical` backend runs BM25 only, with no torch/faiss. |
+| `planner.py` (126 lines) | One Groq call, `temperature=0`, JSON object mode, with an explicit boundary prompt. Raises on truncation and on non-object output. |
+| `config.py` (17 lines) | All paths and model names configurable through `NET2TF_*` environment variables. The Kaggle-absolute paths are gone. |
+| `legacy/` | The archived original: intake, validators, `terraform_builder.py`, `templates/*.j2`, `ansible_planner.py`, `ansible_builder.py`, `deploy_check.py`. |
+
+### 9.2 What this changes for the integration
+
+The upstream project has independently arrived at the same boundary this refactor defines.
+Its own prompt now states: *"Field validation, clarification, dialogue, code generation,
+execution and testing belong to other applications. Do none of these. Return only a JSON
+plan."* It also refuses to invent routes, bastions or public access, and forbids inferring
+peering or Transit Gateway from device counts — the exact behaviour the archived
+implementation hard-coded and its gap report criticised.
+
+Consequences for the adapter:
+
+1. **The prose descriptor is unnecessary and has been dropped.** The RAG now consumes JSON
+   directly, so `NetworkArchitecture` maps to its input shape structurally. The risk
+   recorded in §2.5(2) and §5 — that a deterministic compiler parsed the original prompt
+   text — no longer exists.
+2. **Input is JSON with a documented convention** (`docs/JSON_CONTRACT.md`): `components[]`
+   with interfaces / routing / services, interface-level `edges[]`, `cloud`,
+   `translation_mode`, and `ansible.{connections,tasks}`. It is far richer than the archived
+   `Architecture` model — it carries interfaces, per-interface addressing, OSPF areas,
+   router ids, static routes, VLANs and services — so the fidelity loss recorded as the
+   highest integration risk in §6 is largely gone.
+3. **Output is a plan, not files**: `cloud_plan` (component mapping, networking, security,
+   dependencies), `ansible_plan` (targets, tasks as structured intentions), `rule_ids`,
+   `limitations`, plus the architecture and knowledge citations re-attached deterministically.
+   *"Tasks describe intentions; they contain no executable YAML."*
+4. **The RAG performs no validation.** `plan_architecture` checks only that input and output
+   are JSON objects. Validation is explicitly caller-owned — which is this platform's
+   `network_validator` before, and `CloudArchitectureValidator` after.
+5. **Paths are configurable**, so the adapter no longer needs to patch module constants.
+6. **`legacy/` must never be imported.** The adapter targets the active API only.
+
+### 9.3 Revised integration risks
+
+| Risk | Mitigation |
+| --- | --- |
+| The plan is free-form JSON: the model may omit fields or return prose where a structure was expected. | `CloudArchitectureAssembler` is defensive and deterministic. It types what it can, records what it cannot in `unmapped[]`, and never treats an absent field as a permission. |
+| `cloud_representation` is a model-authored string. | Interpreted through an explicit, tested lookup table. An unrecognised value becomes a warning, not a guess. |
+| One Groq call with no schema enforcement upstream. | The adapter validates the plan's *shape* before assembly and raises `RAGError` rather than passing a malformed plan onward. |
+| Upstream is under active development. | The loader asserts the symbols it uses at import time and reports the checkout's git revision in `producers`, so a drift shows up in the diagnostics rather than as a mystery failure. |
