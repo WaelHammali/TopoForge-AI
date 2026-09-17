@@ -274,8 +274,11 @@ def normalize_interface_name(value: str) -> str | None:
     if not text:
         return None
 
+    # Linux-style names win: "eth0" is a real interface name, not an abbreviation of
+    # "Ethernet0". The two patterns cannot both match a vendor name such as
+    # "Ethernet0/1", because the Linux pattern requires a digit straight after the prefix.
     linux = _LINUX_IFACE_RE.search(text.lower())
-    if linux is not None and _INTERFACE_RE.match(text) is None:
+    if linux is not None:
         return linux.group(0)
 
     match = _INTERFACE_RE.search(text)
