@@ -1,0 +1,36 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.env.local
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Model weights are never committed. See models/README.md
+models/**/*.pt
+models/**/*.onnx
+models/**/*.engine
+
+# Vendored external RAG (synced, not tracked). See external/rag/README.md
+external/rag/
+!external/rag/README.md
+
+# Runtime artifacts
+var/
+generated/
+index/
+*.tfstate
+*.tfstate.backup
+.terraform/
+*.tfplan
+
+# Frontend
+node_modules/
+.next/
+out/
+apps/web/.env*.local
