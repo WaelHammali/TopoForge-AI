@@ -93,14 +93,32 @@ tests/contract/test_pipeline_invariant.py     ← guards the non-negotiable rule
 tests/e2e/test_prompt_to_architecture.py
 ```
 
-## Phase 11 — RAG integration
+## Phase 11 — RAG integration (network → cloud translation ONLY)
 ```
 external/rag/README.md                   # INTEGRATION POINT: vendored net2tf_v3
 scripts/sync_external_rag.sh
-src/infrastructure/rag/{loader.py,descriptor.py,mapper.py,provider.py,stub.py}
-tests/unit/rag/test_descriptor_renderer.py, test_architecture_mapper.py
+src/domain/cloud/                        CloudArchitecture: infrastructure | configuration
+src/infrastructure/rag/{loader.py,descriptor.py,network_mapper.py,cloud_assembler.py,
+                        provider.py,stub.py}
+tests/unit/cloud/test_cloud_architecture.py
+tests/unit/rag/test_descriptor_renderer.py, test_cloud_assembler.py
 tests/integration/rag/test_legacy_provider.py  (skipped without the vendored RAG)
 ```
+The RAG's Terraform and Ansible rendering are deliberately NOT invoked.
+
+## Phase 11b — Deterministic generators
+```
+src/domain/generation/                   GeneratedFile/Project, TerraformProject,
+                                         AnsibleProject, GeneratorValidationResult
+src/application/ports/generation.py      CodeGenerator, InventoryGenerator,
+                                         ProjectValidator, executors
+src/infrastructure/generators/terraform/{generator.py,mappings/,templates/,validator.py}
+src/infrastructure/generators/ansible/{generator.py,mappings/,templates/,validator.py}
+src/infrastructure/generators/inventory/generator.py
+tests/unit/generators/  + tests/golden/   deterministic snapshot tests
+tests/e2e/test_network_to_cloud_to_iac.py
+```
+No generator may import an LLM or RAG symbol; a test asserts this.
 
 ## Phase 12 — Backend
 ```
@@ -117,23 +135,27 @@ tests/integration/api/*
 ```
 apps/web/  Next.js App Router, TypeScript strict, Tailwind, shadcn/ui, React Flow
            workspace shell · left asset panel · canvas + overlays · right inspector ·
-           tabs: Detection · Topology · JSON · RAG · Deployment · Logs
+           tabs: Input · Detection · Topology · Network JSON · Cloud Architecture ·
+                 Terraform · Ansible · Deployment · Logs
            prompt mode · clarification panel · approval dialog · SSE client
 ```
 
 ## Phase 14 — Deployment workflow
 ```
-src/infrastructure/deployment/{terraform.py,approval.py,stub.py}
-src/application/use_cases/{plan_deployment.py,approve_deployment.py,execute_deployment.py}
+src/infrastructure/deployment/{terraform_executor.py,ansible_executor.py,approval.py,stub.py}
+src/application/use_cases/{plan_deployment.py,approve_deployment.py,execute_deployment.py,
+                           generate_inventory.py,run_configuration.py}
 tests/unit/deployment/test_approval_gate.py
 ```
+Order is fixed: validate → plan → approval → apply → outputs → inventory → ansible run.
 
 ## Phase 15 — Production quality
 ```
 docker/{Dockerfile.api,Dockerfile.worker-vision,Dockerfile.worker-rag,
         Dockerfile.worker-deployment,Dockerfile.web}
 docker-compose.yml · .github/workflows/ci.yml · pyproject.toml · .pre-commit-config.yaml
-docs/{LANGGRAPH_WORKFLOW,ARCHITECTURE_JSON_SCHEMA,RAG_INTEGRATION,VISION_PIPELINE,
+docs/{LANGGRAPH_WORKFLOW,ARCHITECTURE_JSON_SCHEMA,CLOUD_ARCHITECTURE_SCHEMA,
+      RAG_INTEGRATION,VISION_PIPELINE,TERRAFORM_GENERATOR,ANSIBLE_GENERATOR,
       DEPLOYMENT_FLOW,DEVELOPMENT,DECISIONS}.md · docs/adr/*.md
 ```
 

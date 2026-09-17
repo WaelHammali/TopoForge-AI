@@ -6,7 +6,11 @@
 
 ## 1. The invariant
 
-One rule governs the whole system. It is not negotiable and no shortcut around it is permitted.
+Two rules govern the whole system. Neither is negotiable and no shortcut around either is
+permitted.
+
+**Rule 1 — everything converges on `network_architecture.json`.**
+**Rule 2 — the RAG consumes it, produces `cloud_architecture.json`, and then stops.**
 
 ```
 IMAGE ──► YOLO + OCR + EDGE DETECTION ──► TOPOLOGY BUILDER ─┐
@@ -19,29 +23,54 @@ PROMPT ─► LLM ────────────────────�
                                                             ▼
                                              NETWORK VALIDATION
                                                             ▼
-                                            ►  architecture.json  ◄
+                                     ►  network_architecture.json  ◄
                                                             ▼
-                                                        R A G
+                                             R A G   (translation)
                                                             ▼
-                                                 DEPLOYMENT LOGIC
-                                                            ▼
-                                              VALIDATION / PLAN
-                                                            ▼
-                                                 USER APPROVAL
-                                                            ▼
-                                                          AWS
+                                     ►   cloud_architecture.json   ◄
+                                                            │
+                                    ┌───────────────────────┴───────────┐
+                                    ▼                                   ▼
+                          TerraformGenerator                   AnsibleGenerator
+                          (deterministic)                      (deterministic)
+                                    ▼                                   ▼
+                            TerraformProject                    AnsibleProject
+                                    ▼                                   ▼
+                          terraform validate                  ansible syntax-check
+                                    └───────────────┬───────────────────┘
+                                                    ▼
+                                            DEPLOYMENT REVIEW
+                                                    ▼
+                                             TERRAFORM PLAN
+                                                    ▼
+                                             USER APPROVAL
+                                                    ▼
+                                             TERRAFORM APPLY
+                                                    ▼
+                                            TERRAFORM OUTPUTS
+                                                    ▼
+                                           INVENTORY GENERATOR
+                                                    ▼
+                                             ANSIBLE EXECUTE
 ```
 
 Consequences, enforced structurally and by test:
 
-- `architecture.json` is the **only** input the RAG ever receives (via its adapter).
-- The RAG is the **last** AI component before infrastructure. Nothing intelligent sits between
-  `architecture.json` and the RAG, and nothing bypasses the RAG.
+- `network_architecture.json` is the **only** input the RAG ever receives.
+- `cloud_architecture.json` is the **only** output the RAG ever produces. The RAG writes
+  no files, no HCL, no YAML, no shell.
+- The generators are **pure deterministic functions** of `cloud_architecture.json`. They
+  never call an LLM, never call the RAG, and produce byte-identical output for identical
+  input — which is what makes golden-file testing possible.
+- Generated code never flows back into the RAG. Syntax problems surface as structured
+  validator errors, not as an LLM repair loop. AI-assisted remediation, if ever added, is
+  an explicitly opt-in separate feature.
 - The image pipeline cannot deploy. The prompt LLM cannot deploy. Neither can call the RAG
   directly — both terminate at a validated `NetworkArchitecture`.
-- A contract test (`tests/contract/test_pipeline_invariant.py`) asserts the graph topology
-  itself: the only edge into the RAG node comes from the validation node, and the only path to
-  deployment comes from the RAG node.
+- Contract tests (`tests/contract/test_pipeline_invariant.py`) assert the graph topology
+  itself: the only edge into the RAG node comes from network validation; the only edge out
+  of it goes to cloud-architecture validation; every generator node is reachable only from
+  there; and no generator module imports an LLM or RAG symbol.
 
 ## 2. System context
 
@@ -97,8 +126,10 @@ Enforced by `tests/unit/test_layering.py`, which walks the AST of every module u
 | `domain/network/` | `IPAddressSpec`, `SubnetSpec`, `Interface`, `Network`, `VLAN`, `MACAddress` value objects; canonical IP/CIDR arithmetic on `ipaddress`. |
 | `domain/topology/` | `Node`, `Edge`, `NodeType`, `Topology`, `BoundingBox`, `Evidence`, `Provenance`. |
 | `domain/routing/` | `OSPFConfiguration`, `OSPFArea`, `StaticRoute`, `RoutingPlan`, `RoutingProtocol`. |
-| `domain/architecture/` | `NetworkArchitecture` (the canonical aggregate), `ArchitectureMetadata`, `ArchitectureRevision`, `UnresolvedField`, `ValidationIssue`, `ValidationReport`, `MissingInformation`, `EnrichmentOption`, `ClarificationQuestion`. |
-| `domain/deployment/` | `DeploymentArtifact`, `DeploymentPlan`, `DeploymentState`, `ApprovalRecord`, `DeploymentTarget`. |
+| `domain/architecture/` | `NetworkArchitecture` (the canonical *network* aggregate — the RAG's input), `ArchitectureMetadata`, `ArchitectureRevision`, `UnresolvedField`, `ValidationIssue`, `ValidationReport`, `MissingInformation`, `EnrichmentOption`, `ClarificationQuestion`. |
+| `domain/cloud/` | `CloudArchitecture` (the RAG's *output*), split into `infrastructure` (networks, subnets, route tables, gateways, compute, databases, load balancers, security) and `configuration` (hosts, roles, services, packages), plus relationships, IAM, assumptions, warnings. Provider-neutral core with an AWS vocabulary. Contains **no** Terraform or Ansible concepts. |
+| `domain/generation/` | `GeneratedFile`, `GeneratedProject`, `TerraformProject`, `AnsibleProject`, `GeneratorWarning`, `GeneratorError`, `GeneratorValidationResult`. |
+| `domain/deployment/` | `DeploymentArtifact`, `DeploymentPlan`, `DeploymentState`, `ApprovalRecord`, `DeploymentTarget`, `DeploymentOutputs`. |
 
 The domain also owns the **validators** (`domain/architecture/validators/`), because network
 correctness is domain knowledge, not infrastructure.
@@ -106,8 +137,11 @@ correctness is domain knowledge, not infrastructure.
 ### 3.2 Ports (`application/ports/`)
 
 `ObjectDetector` · `OCRProvider` · `ConnectorDetector` · `ImagePreprocessor` ·
-`SpatialAssociator` · `LLMProvider` · `RAGProvider` · `DeploymentProvider` · `ObjectStorage` ·
-`JobQueue` · `EventPublisher` · `ModelLoader` · `Clock` · `IdGenerator` · and the repositories
+`SpatialAssociator` · `LLMProvider` · `RAGProvider` (network → cloud translation only) ·
+`CloudArchitectureValidator` · `CodeGenerator` / `TerraformGenerator` / `AnsibleGenerator` ·
+`InventoryGenerator` · `ProjectValidator` · `InfrastructureExecutor` ·
+`ConfigurationExecutor` · `ObjectStorage` · `JobQueue` · `EventPublisher` · `ModelLoader` ·
+`Clock` · `IdGenerator` · and the repositories
 `ProjectRepository`, `AssetRepository`, `ArchitectureRepository`, `JobRepository`,
 `DeploymentRepository`, `AuditRepository`.
 
@@ -124,8 +158,12 @@ Every port is an ABC with a matching **contract test suite** that any implementa
 | `vision/edges/HoughConnectorDetector` | `ConnectorDetector` | OpenCV mask → skeleton → endpoints → arrowheads. |
 | `vision/spatial/GeometricSpatialAssociator` | `SpatialAssociator` | Deterministic geometry first; LLM tie-break only on ambiguity. |
 | `llm/openai/OpenAIProvider`, `llm/anthropic/AnthropicProvider` | `LLMProvider` | Structured output → pydantic validation before acceptance. |
-| `rag/LegacyNet2TFRAGProvider` | `RAGProvider` | Wraps `net2tf_v3` unchanged. |
-| `deployment/TerraformDeploymentProvider` | `DeploymentProvider` | `fmt`/`init`/`validate`/`plan` always; `apply` only with an approval token. |
+| `rag/LegacyNet2TFRAGProvider` | `RAGProvider` | Wraps `net2tf_v3`'s retrieval, advisory planning and deterministic cloud mapping. Its Terraform and Ansible rendering are **not** invoked. |
+| `generators/terraform/` | `TerraformGenerator` | Deterministic Jinja2 rendering from `CloudArchitecture`, with a centralised resource mapping table. No LLM. |
+| `generators/ansible/` | `AnsibleGenerator` | Deterministic roles/playbooks/group_vars from the `configuration` half. No LLM. |
+| `generators/inventory/` | `InventoryGenerator` | Runs only *after* apply, from real Terraform outputs. |
+| `deployment/TerraformExecutor` | `InfrastructureExecutor` | `fmt`/`init`/`validate`/`plan` always; `apply` only with an approval token. |
+| `deployment/AnsibleExecutor` | `ConfigurationExecutor` | `--syntax-check` always; run only after apply. |
 | `persistence/` | repositories | SQLAlchemy 2.0 async + Alembic; JSONB for architecture documents. |
 | `storage/LocalObjectStorage`, `storage/S3ObjectStorage` | `ObjectStorage` | |
 | `orchestration/langgraph/` | — | Graphs, state, checkpointers, node wrappers. |
@@ -164,12 +202,43 @@ checkpoints (which are an orchestration concern and may be pruned).
 
 ## 6. RAG integration
 
-The existing `net2tf_v3` project is wrapped, never rewritten. Because its deterministic
-compiler parses the *original prose*, the adapter pairs the canonical architecture with a
-**deterministically rendered descriptor** (a pure template — no LLM) that expresses exactly the
-facts the compiler reads: base CIDR, `SW = CIDR` bindings, bastion/public/NAT intent, firewall
-mode, addressing authorization. Loss at the boundary is computed and returned as `unmapped[]`.
-Detail and rationale: [`docs/RAG_INTEGRATION.md`](RAG_INTEGRATION.md), ADR-0004.
+The existing `net2tf_v3` project is wrapped, never rewritten — but only the half of it that
+is genuinely cloud reasoning is invoked:
+
+| Invoked | Not invoked |
+| --- | --- |
+| `enrich_with_manual_addressing` — addressing knowledge | `extractor.py` — we already have a validated architecture |
+| `retrieve_context` — FAISS + rerank over the KB | `terraform_builder.render_project` — syntax |
+| `plan_with_rag` — advisory cloud plan | `ansible_planner` / `ansible_builder` — syntax |
+| `validate_architecture` | `quality_checks` / `deploy_check` — execution |
+| `build_domain_plan` — routers→VPCs, switches→subnets, host placement, peering/TGW | |
+
+Because its deterministic compiler parses the *original prose*, the adapter pairs the
+canonical network architecture with a **deterministically rendered descriptor** (a pure
+template — no LLM) that expresses exactly the facts the compiler reads. A
+`CloudArchitectureAssembler` then turns the resulting `DomainPlan` + advisory plan +
+retrieved context into a typed `CloudArchitecture`. Loss at either boundary is computed and
+reported as `unmapped[]` — never hidden.
+
+Detail: [`docs/RAG_INTEGRATION.md`](RAG_INTEGRATION.md),
+[`docs/CLOUD_ARCHITECTURE_SCHEMA.md`](CLOUD_ARCHITECTURE_SCHEMA.md), ADR-0004, ADR-0005.
+
+## 6a. Generation
+
+`cloud_architecture.json` fans out to independent deterministic generators:
+
+```
+                      ┌── TerraformGenerator  → TerraformProject  (provisioning)
+cloud_architecture ───┼── AnsibleGenerator    → AnsibleProject    (configuration)
+                      └── future: CloudFormation / Pulumi / Bicep
+```
+
+Terraform provisions; Ansible configures. Ownership never overlaps: a concern belongs to
+exactly one of them. Ansible's inventory is *not* generated up-front, because real
+addresses exist only after apply — `InventoryGenerator` runs on Terraform outputs.
+
+Artifacts are stored at `generated/{architecture_id}/{revision}/` in object storage, which
+is the business source of truth; local paths are a working directory, never authority.
 
 ## 7. Deployment safety
 
