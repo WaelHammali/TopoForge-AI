@@ -217,7 +217,11 @@ def full_cloud() -> CloudArchitecture:
         logical_name="r1-appliance",
         subnet_id="sn-public",
         interfaces=(
-            NetworkInterfaceSpec(id="nic-r1-0", subnet_id="sn-public", primary=True),
+            # A forwarding appliance must have source/destination checking off on every
+            # interface, not only the secondary one: AWS drops transit traffic otherwise.
+            NetworkInterfaceSpec(
+                id="nic-r1-0", subnet_id="sn-public", primary=True, source_dest_check=False
+            ),
             NetworkInterfaceSpec(
                 id="nic-r1-1", subnet_id="sn-private", source_dest_check=False
             ),
