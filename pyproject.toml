@@ -42,12 +42,14 @@ llm = [
     "anthropic>=0.28",
 ]
 rag = [
+    # The active net2tf RAG's own requirements.txt: groq, sentence-transformers, numpy.
+    # numpy is already a base dependency. torch/transformers arrive transitively through
+    # sentence-transformers only when the "hybrid" retrieval backend is used; the
+    # "lexical" backend (custom BM25, no embeddings) needs neither. No jinja2, faiss or
+    # scikit-learn: the RAG's Terraform/Ansible rendering moved to legacy/ and is not
+    # invoked, and its retrieval uses a hand-rolled BM25, not faiss.
     "groq>=0.9",
-    "jinja2>=3.1",
     "sentence-transformers>=3.0",
-    "faiss-cpu>=1.8",
-    "torch>=2.2",
-    "scikit-learn>=1.4",
 ]
 storage = ["boto3>=1.34"]
 observability = ["structlog>=24.1", "opentelemetry-api>=1.25", "opentelemetry-sdk>=1.25"]

@@ -255,10 +255,19 @@ Public API — `app.plan_architecture(architecture: dict, *, client=None, retrie
 | Module | Role |
 | --- | --- |
 | `app.py` (72 lines) | Python API + `plan` / `context` CLI. Deep-copies the input, retrieves, plans, and re-attaches the untouched architecture and the knowledge citations. |
-| `retriever.py` (340 lines) | Hybrid retrieval: BM25 + embeddings + cross-encoder, content-aware caching, core rules always pinned. A `lexical` backend runs BM25 only, with no torch/faiss. |
-| `planner.py` (126 lines) | One Groq call, `temperature=0`, JSON object mode, with an explicit boundary prompt. Raises on truncation and on non-object output. |
+| `retriever.py` (340 lines) | Hybrid retrieval: hand-rolled BM25 (no faiss) + embeddings + cross-encoder, content-aware caching (fingerprints the whole `kb/` directory), core rules always pinned. `sentence-transformers` is imported lazily inside `_models()`, only when the `hybrid` backend actually runs; the `lexical` backend needs no ML dependency at all. |
+| `planner.py` (126 lines) | One Groq call, `temperature=0`, JSON object mode, with an explicit boundary prompt. `groq` is imported lazily inside `plan_with_rag`, only when no client is injected. Validates its own model output's envelope — `cloud_plan`/`ansible_plan` must be objects, `rule_ids`/`limitations` must be lists, and no unexpected top-level section is tolerated — before returning it. |
 | `config.py` (17 lines) | All paths and model names configurable through `NET2TF_*` environment variables. The Kaggle-absolute paths are gone. |
 | `legacy/` | The archived original: intake, validators, `terraform_builder.py`, `templates/*.j2`, `ansible_planner.py`, `ansible_builder.py`, `deploy_check.py`. |
+
+**Dependencies actually declared today** (`requirements.txt`): `groq`, `sentence-transformers`,
+`numpy` — down from the archived version's ten packages. No `jinja2`, `faiss-cpu`, `torch`,
+`scikit-learn`, `pydantic`, `transformers` or `ansible`. Verified live on 2026-09-18: neither
+`groq` nor `sentence-transformers` is installed in this environment, and `load_rag()` still
+imports `app`, `config`, `planner` and `retriever` successfully, and a real `lexical`-backend
+retrieval against this platform's mapped architecture returns real knowledge records
+(`CORE-001..003`, `MAP-001`, `L2-002`, …) with zero ML dependencies present. This platform's
+own `pyproject.toml` `rag` extras previously still listed the archived set; corrected to match.
 
 ### 9.2 What this changes for the integration
 

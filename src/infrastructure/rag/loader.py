@@ -147,8 +147,11 @@ def _import_modules(root: Path) -> dict[str, ModuleType]:
             try:
                 modules[name] = importlib.import_module(name)
             except ImportError as error:
-                # A missing heavy dependency (torch, faiss) is expected in lean
-                # environments; the lexical retrieval backend does not need them.
+                # A missing heavy dependency (sentence-transformers, or groq for
+                # planner.py) is expected in lean environments; the lexical retrieval
+                # backend needs neither, and both modules import lazily inside their
+                # functions rather than at module level, so retrieval-only use works
+                # even when groq is not installed at all.
                 if name in {"retriever", "planner"}:
                     _logger.warning(
                         "rag.optional_module_unavailable",
